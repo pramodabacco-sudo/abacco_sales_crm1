@@ -545,7 +545,18 @@ export default function MessageView({
              */}
             {messages
               .filter((msg) => {
-                if (selectedFolder === "sent") return msg.direction === "sent";
+                // 1️⃣ SENT FOLDER: Show ONLY outbound messages
+                if (selectedFolder === "sent") {
+                  return msg.direction === "sent";
+                }
+
+                // 2️⃣ SPAM & TRASH FOLDERS: Show everything returned by the backend
+                // These folders often contain bounce-backs (received) and original sends
+                if (["spam", "trash"].includes(selectedFolder)) {
+                  return true; // 🔥 FIX: Allow both sent/received to show in Spam view
+                }
+
+                // 3️⃣ INBOX (DEFAULT): Show ONLY received messages
                 return msg.direction === "received";
               })
               .map((message) => {

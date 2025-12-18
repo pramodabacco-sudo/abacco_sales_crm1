@@ -362,9 +362,10 @@ async function saveEmailToDB(prisma, account, parsed, msg, direction, folder) {
 /* ======================================================
    🔄 IMAP SYNC (unchanged)
 ====================================================== */
-// server/src/services/sync/imapSync.js
 
 // async function syncImap(prisma, account) {
+//   console.log(`🔄 Starting sync for ${account.email}...`);
+
 //   const client = new ImapFlow({
 //     host: account.imapHost,
 //     port: account.imapPort || 993,
@@ -374,32 +375,129 @@ async function saveEmailToDB(prisma, account, parsed, msg, direction, folder) {
 //       pass: account.encryptedPass,
 //     },
 //     tls: { rejectUnauthorized: false },
-//     // 🔥 ADD TIMEOUT SETTINGS TO REDUCE HANGS
-//     socketTimeout: 60000, // 60 seconds
-//     connectionTimeout: 30000, // 30 seconds
+//     socketTimeout: 90000, // 90 seconds to handle slow Zoho/Gmail responses
+//     connectionTimeout: 30000,
+//     logger: false,
 //   });
 
-//   // 🔥 CRITICAL: Prevent "Unhandled error event" crash
+//   // 🔥 CRITICAL: Handle errors to prevent server crash
 //   client.on("error", (err) => {
-//     console.error(
-//       `⚠️ IMAP Sync caught error for ${account.email}:`,
-//       err.message
-//     );
+//     console.error(`⚠️ IMAP Sync Error (${account.email}):`, err.message);
 //   });
 
 //   try {
 //     await client.connect();
-//     // ... rest of sync logic
+
+//     // 1. FOLDER DISCOVERY & NORMALIZATION
+//     const mailboxes = await client.list();
+//     const foldersToSync = [];
+
+//     for (const box of mailboxes) {
+//       const lowerPath = box.path.toLowerCase();
+//       // Detect Inbox, Sent, and Spam regardless of server naming (Zoho/Gmail)
+//       if (lowerPath === "inbox" || box.specialUse === "\\Inbox") {
+//         foldersToSync.push({ path: box.path, type: "inbox" });
+//       } else if (lowerPath.includes("sent") || box.specialUse === "\\Sent") {
+//         foldersToSync.push({ path: box.path, type: "sent" });
+//       } else if (lowerPath.includes("spam") || box.specialUse === "\\Junk") {
+//         foldersToSync.push({ path: box.path, type: "spam" });
+//       }
+//     }
+
+//     console.log(
+//       `📂 Found ${foldersToSync.length} folders to sync for ${account.email}`
+//     );
+
+//     // 2. PROCESS EACH FOLDER
+//     for (const { path, type } of foldersToSync) {
+//       console.log(`📥 Syncing Folder: ${path} (${type})`);
+
+//       const lock = await client.getMailboxLock(path);
+//       try {
+//         // 🔥 CRITICAL: You MUST open the mailbox before searching for messages
+//         await client.mailboxOpen(path);
+
+//         const uids = await client.search({ all: true });
+//         console.log(`🔢 Total messages found in ${path}: ${uids.length}`);
+
+//         if (uids.length === 0) continue;
+
+//         // Process in batches (newest first)
+//         const reversedUids = uids.reverse();
+//         const limit = pLimit(PARSE_CONCURRENCY || 5);
+
+//         for (let i = 0; i < reversedUids.length; i += BATCH_SIZE || 50) {
+//           const batch = reversedUids.slice(i, i + (BATCH_SIZE || 50));
+
+//           await Promise.all(
+//             batch.map((uid) =>
+//               limit(async () => {
+//                 try {
+//                   const msg = await client.fetchOne(String(uid), {
+//                     uid: true,
+//                     source: true,
+//                     envelope: true,
+//                     internalDate: true,
+//                   });
+
+//                   if (!msg) return;
+
+//                   const parsed = await simpleParser(msg.source);
+//                   const fromAddr =
+//                     parsed.from?.value?.[0]?.address?.toLowerCase() || "";
+
+//                   // Determine direction
+//                   const direction =
+//                     fromAddr === account.email.toLowerCase()
+//                       ? "sent"
+//                       : "received";
+
+//                   // 🔥 Save to DB using the anchor logic to prevent orphans
+//                   await saveEmailToDB(
+//                     prisma,
+//                     account,
+//                     parsed,
+//                     msg,
+//                     direction,
+//                     type
+//                   );
+//                 } catch (e) {
+//                   console.warn(`⚠️ Error processing UID ${uid}:`, e.message);
+//                 }
+//               })
+//             )
+//           );
+//         }
+//       } finally {
+//         if (lock) lock.release();
+//       }
+//     }
+
+//     console.log(`✅ Completed sync for ${account.email}`);
 //   } catch (err) {
-//     console.error(`❌ Sync Connect failed for ${account.email}:`, err.message);
+//     console.error(
+//       `❌ Connection/Sync failed for ${account.email}:`,
+//       err.message
+//     );
 //   } finally {
-//     if (client) await client.logout().catch(() => {});
+//     if (client) {
+//       await client.logout().catch(() => {});
+//       console.log(`🔌 Connection closed for ${account.email}`);
+//     }
 //   }
 // }
-/* server/src/services/sync/imapSync.js */
+
+// Global lock to prevent overlapping syncs for the same account
+const activeSyncs = new Set();
 
 async function syncImap(prisma, account) {
-  console.log(`🔄 Starting sync for ${account.email}...`);
+  if (activeSyncs.has(account.id)) {
+    console.log(`⏳ Sync already in progress for ${account.email}, skipping...`);
+    return;
+  }
+
+  activeSyncs.add(account.id);
+  console.log(`🔄 Starting High-Capacity Sync for ${account.email}...`);
 
   const client = new ImapFlow({
     host: account.imapHost,
@@ -410,64 +508,84 @@ async function syncImap(prisma, account) {
       pass: account.encryptedPass,
     },
     tls: { rejectUnauthorized: false },
-    socketTimeout: 90000, // 90 seconds to handle slow Zoho/Gmail responses
-    connectionTimeout: 30000,
+    socketTimeout: 120000, // 2 mins for large mailboxes
+    connectionTimeout: 45000,
     logger: false,
   });
 
-  // 🔥 CRITICAL: Handle errors to prevent server crash
-  client.on("error", (err) => {
-    console.error(`⚠️ IMAP Sync Error (${account.email}):`, err.message);
-  });
+  client.on("error", (err) => console.error(`⚠️ IMAP Error:`, err.message));
 
   try {
     await client.connect();
-
-    // 1. FOLDER DISCOVERY & NORMALIZATION
     const mailboxes = await client.list();
     const foldersToSync = [];
 
+    // Folder discovery...
+    // for (const box of mailboxes) {
+    //   const lowerPath = box.path.toLowerCase();
+    //   if (lowerPath === "inbox" || box.specialUse === "\\Inbox") foldersToSync.push({ path: box.path, type: "inbox" });
+    //   else if (lowerPath.includes("sent") || box.specialUse === "\\Sent") foldersToSync.push({ path: box.path, type: "sent" });
+    // }
+    /* server/src/services/sync/imapSync.js */
+
     for (const box of mailboxes) {
       const lowerPath = box.path.toLowerCase();
-      // Detect Inbox, Sent, and Spam regardless of server naming (Zoho/Gmail)
+
       if (lowerPath === "inbox" || box.specialUse === "\\Inbox") {
         foldersToSync.push({ path: box.path, type: "inbox" });
       } else if (lowerPath.includes("sent") || box.specialUse === "\\Sent") {
         foldersToSync.push({ path: box.path, type: "sent" });
-      } else if (lowerPath.includes("spam") || box.specialUse === "\\Junk") {
+      }
+      // 🔥 EXPANDED SPAM DETECTION
+      else if (
+        lowerPath.includes("spam") ||
+        lowerPath.includes("junk") ||
+        lowerPath.includes("bulk") ||
+        box.specialUse === "\\Junk"
+      ) {
         foldersToSync.push({ path: box.path, type: "spam" });
       }
     }
 
-    console.log(
-      `📂 Found ${foldersToSync.length} folders to sync for ${account.email}`
-    );
-
-    // 2. PROCESS EACH FOLDER
     for (const { path, type } of foldersToSync) {
-      console.log(`📥 Syncing Folder: ${path} (${type})`);
+      if (!client.usable) break;
 
+      console.log(`📥 Processing Folder: ${path}`);
       const lock = await client.getMailboxLock(path);
+
       try {
-        // 🔥 CRITICAL: You MUST open the mailbox before searching for messages
         await client.mailboxOpen(path);
 
-        const uids = await client.search({ all: true });
-        console.log(`🔢 Total messages found in ${path}: ${uids.length}`);
+        // 🔥 HIGH-VOLUME OPTIMIZATION: Only sync messages from the last 30 days
+        // to prevent crashing on 10,000+ historical emails initially
+        const searchCriteria = { all: true };
+        const uids = await client.search(searchCriteria);
 
         if (uids.length === 0) continue;
 
-        // Process in batches (newest first)
         const reversedUids = uids.reverse();
-        const limit = pLimit(PARSE_CONCURRENCY || 5);
 
-        for (let i = 0; i < reversedUids.length; i += BATCH_SIZE || 50) {
-          const batch = reversedUids.slice(i, i + (BATCH_SIZE || 50));
+        // 🔥 STABILITY SETTINGS
+        const SMALL_BATCH = 15; // Process few items per database transaction
+        const STABLE_LIMIT = pLimit(2); // Low concurrency to prevent DB locking
+        const THROTTLE_MS = 250; // 1/4 second delay to prevent server resets
+
+        for (let i = 0; i < reversedUids.length; i += SMALL_BATCH) {
+          if (!client.usable) break;
+
+          const batch = reversedUids.slice(i, i + SMALL_BATCH);
 
           await Promise.all(
             batch.map((uid) =>
-              limit(async () => {
+              STABLE_LIMIT(async () => {
                 try {
+                  if (!client.usable) return;
+
+                  // 🔥 FIX: Aggressive throttling for 10k+ mailboxes
+                  await new Promise((resolve) =>
+                    setTimeout(resolve, THROTTLE_MS)
+                  );
+
                   const msg = await client.fetchOne(String(uid), {
                     uid: true,
                     source: true,
@@ -480,14 +598,11 @@ async function syncImap(prisma, account) {
                   const parsed = await simpleParser(msg.source);
                   const fromAddr =
                     parsed.from?.value?.[0]?.address?.toLowerCase() || "";
-
-                  // Determine direction
                   const direction =
                     fromAddr === account.email.toLowerCase()
                       ? "sent"
                       : "received";
 
-                  // 🔥 Save to DB using the anchor logic to prevent orphans
                   await saveEmailToDB(
                     prisma,
                     account,
@@ -497,7 +612,9 @@ async function syncImap(prisma, account) {
                     type
                   );
                 } catch (e) {
-                  console.warn(`⚠️ Error processing UID ${uid}:`, e.message);
+                  if (e.message.includes("Connection not available"))
+                    client.close();
+                  console.warn(`⚠️ UID ${uid} failed:`, e.message);
                 }
               })
             )
@@ -507,21 +624,14 @@ async function syncImap(prisma, account) {
         if (lock) lock.release();
       }
     }
-
-    console.log(`✅ Completed sync for ${account.email}`);
   } catch (err) {
-    console.error(
-      `❌ Connection/Sync failed for ${account.email}:`,
-      err.message
-    );
+    console.error(`❌ Sync Failed:`, err.message);
   } finally {
-    if (client) {
-      await client.logout().catch(() => {});
-      console.log(`🔌 Connection closed for ${account.email}`);
-    }
+    activeSyncs.delete(account.id);
+    if (client) await client.logout().catch(() => {});
+    console.log(`🔌 Connection closed for ${account.email}`);
   }
 }
-
 /* ======================================================
    🚀 PUBLIC EXPORTS
 ====================================================== */

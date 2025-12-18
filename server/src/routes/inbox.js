@@ -191,92 +191,38 @@ router.get("/messages/sent", async (req, res) => {
 /* ============================================================
    🔥 FIX: GET CONVERSATION MESSAGES
    ⚠️ Simple: Just fetch messages by conversationId
-   ============================================================ */
-// router.get("/conversation/:conversationId", async (req, res) => {
-//   try {
-//     const conversationId = req.params.conversationId;
-//     const accountId = Number(req.query.accountId);
-
-//     if (!accountId) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "accountId required",
-//       });
-//     }
-
-//     // Fetch all messages in this conversation
-//     const messages = await prisma.emailMessage.findMany({
-//       where: {
-//         conversationId,
-//         emailAccountId: accountId,
-//         isTrash: false,
-//         isSpam: false,
-//       },
-//       orderBy: { sentAt: "asc" },
-//       include: {
-//         attachments: true,
-//         tags: {
-//           include: {
-//             Tag: true,
-//           },
-//         },
-//       },
-//     });
-
-//     res.json({
-//       success: true,
-//       data: messages,
-//     });
-//   } catch (err) {
-//     console.error("❌ FETCH CONVERSATION ERROR:", err);
-//     res.status(500).json({ success: false });
-//   }
-// });
-// server/routes/inbox.js
-
-// server/routes/inbox.js
-// server/routes/inbox.js
-
-/* ============================================================
-   🔥 FIXED: GET CONVERSATION MESSAGES (Query Parameter version)
-   ============================================================ */
-
-// router.get("/conversation-detail", async (req, res) => {
-//   const { conversationId } = req.query;
-
-//   const messages = await prisma.emailMessage.findMany({
-//     where: {
-//       conversationId: conversationId,
-//       direction: "received", // 🔥 Filter out all "sent" messages from the timeline
-//     },
-//     orderBy: { sentAt: "asc" }, // Keep chronological order
-//     include: { attachments: true },
-//   });
-
-//   res.json(messages);
-// });
-/* server/src/routes/inbox.js */
-
+   ============================================================ *
+ */
 // router.get("/conversation-detail", async (req, res) => {
 //   try {
-//     const { conversationId, accountId, folder } = req.query; // 💡 Capture folder here
+//     const { conversationId, accountId, folder } = req.query;
 
 //     if (!conversationId || !accountId) {
 //       return res.status(400).json({ success: false, message: "Missing IDs" });
 //     }
 
-//     // 🔥 DETERMINE DIRECTION BASED ON CURRENT FOLDER
-//     const targetDirection = folder === "sent" ? "sent" : "received";
+//     // 🔥 FIX: Define the whereClause inside this route to avoid the ReferenceError
+//     let detailWhere = {
+//       conversationId: conversationId,
+//       emailAccountId: Number(accountId),
+//     };
+
+//     // Apply strict folder separation for the timeline view
+//     if (folder === "sent") {
+//       detailWhere.direction = "sent";
+//     } else if (folder === "inbox") {
+//       detailWhere.direction = "received";
+//       detailWhere.isTrash = false;
+//       detailWhere.isSpam = false;
+//     } else if (folder === "trash") {
+//       detailWhere.isTrash = true;
+//     } else if (folder === "spam") {
+//       detailWhere.isSpam = true;
+//     }
 
 //     const messages = await prisma.emailMessage.findMany({
-//       where: {
-//         conversationId: conversationId,
-//         emailAccountId: Number(accountId),
-//         direction: targetDirection, // 🔥 Apply the strict filter
-//         isTrash: folder === "trash",
-//         isSpam: folder === "spam",
-//       },
-//       orderBy: { sentAt: "asc" }, // chronological timeline stack
+//       where: detailWhere,
+//       orderBy: { sentAt: "asc" },
 //       include: {
 //         attachments: true,
 //         tags: { include: { Tag: true } },
@@ -286,27 +232,54 @@ router.get("/messages/sent", async (req, res) => {
 //     res.json({ success: true, data: messages });
 //   } catch (err) {
 //     console.error("❌ FETCH DETAIL ERROR:", err);
-//     res.status(500).json({ success: false });
+//     res.status(500).json({ success: false, error: err.message });
 //   }
 // });
-/* server/src/routes/inbox.js - Line 213 */
+/* server/src/routes/inbox.js */
+
+/* server/routes/inbox.js */
 
 router.get("/conversation-detail", async (req, res) => {
   try {
     const { conversationId, accountId, folder } = req.query;
 
-    // 🔥 DETERMINE DIRECTION BASED ON CURRENT FOLDER
-    const targetDirection = folder === "sent" ? "sent" : "received";
+    if (!conversationId || !accountId) {
+      return res.status(400).json({ success: false, message: "Missing IDs" });
+    }
 
+    // ------------------------------------------------------------
+    // 1️⃣ BUILD DETAIL QUERY
+    // ------------------------------------------------------------
+    let detailWhere = {
+      conversationId: conversationId,
+      emailAccountId: Number(accountId),
+    };
+
+    // 🔥 FIX: Strict folder-based logic that allows all directions for Spam/Trash
+    const lowerFolder = (folder || "inbox").toLowerCase();
+
+    if (lowerFolder === "sent") {
+      detailWhere.direction = "sent";
+      detailWhere.folder = "sent"; // Match IMAP sync placement
+    } else if (lowerFolder === "spam") {
+      detailWhere.folder = "spam"; // Match IMAP sync placement
+      // ❌ Removed direction: "received" to ensure bounces show
+    } else if (lowerFolder === "trash") {
+      detailWhere.folder = "trash";
+    } else {
+      // Default: Inbox (ONLY Received)
+      detailWhere.direction = "received";
+      detailWhere.folder = "inbox";
+      detailWhere.isTrash = false;
+      detailWhere.isSpam = false;
+    }
+
+    // ------------------------------------------------------------
+    // 2️⃣ FETCH MESSAGES
+    // ------------------------------------------------------------
     const messages = await prisma.emailMessage.findMany({
-      where: {
-        conversationId: conversationId,
-        emailAccountId: Number(accountId),
-        direction: targetDirection, // 🔥 Applied strict filter
-        isTrash: folder === "trash",
-        isSpam: folder === "spam",
-      },
-      orderBy: { sentAt: "asc" },
+      where: detailWhere,
+      orderBy: { sentAt: "asc" }, // Oldest at top, newest at bottom (timeline style)
       include: {
         attachments: true,
         tags: { include: { Tag: true } },
@@ -315,7 +288,8 @@ router.get("/conversation-detail", async (req, res) => {
 
     res.json({ success: true, data: messages });
   } catch (err) {
-    res.status(500).json({ success: false });
+    console.error("❌ FETCH DETAIL ERROR:", err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 /* ============================================================
@@ -327,15 +301,6 @@ router.get("/conversation-detail", async (req, res) => {
 //     const accountId = Number(req.params.accountId);
 //     const folder = req.query.folder || "inbox";
 //     const searchEmail = req.query.searchEmail || "";
-//     const country = req.query.country || "";
-//     const sender = req.query.sender || "";
-//     const recipient = req.query.recipient || "";
-//     const subject = req.query.subject || "";
-//     const dateFrom = req.query.dateFrom || "";
-//     const dateTo = req.query.dateTo || "";
-//     const hasAttachment = req.query.hasAttachment === "true";
-//     const isUnread = req.query.isUnread === "true";
-//     const isStarred = req.query.isStarred === "true";
 
 //     if (!accountId) {
 //       return res.status(400).json({
@@ -345,74 +310,60 @@ router.get("/conversation-detail", async (req, res) => {
 //     }
 
 //     // ---------------------------
-//     // 1️⃣ BUILD WHERE CLAUSE
+//     // 1️⃣ BUILD STRICT WHERE CLAUSE
 //     // ---------------------------
 //     let whereClause = {
 //       emailAccountId: accountId,
-//       conversationId: { not: null }, // 🔥 ONLY messages with conversations
+//       conversationId: { not: null },
 //     };
 
-//     // Folder filter
+//     // 🔥 APPLY STRICT SEPARATION LOGIC
+//     // Filter by 'direction' to ensure Inbox = Received and Sent = Sent
 //     if (folder === "inbox") {
+//       whereClause.direction = "received"; // 🔥 Show ONLY received messages
 //       whereClause.hideInbox = false;
+//       whereClause.isTrash = false;
+//       whereClause.isSpam = false;
+//     } else if (folder === "sent") {
+//       whereClause.direction = "sent"; // 🔥 Show ONLY sent messages
 //       whereClause.isTrash = false;
 //       whereClause.isSpam = false;
 //     } else if (folder === "spam") {
 //       whereClause.isSpam = true;
 //     } else if (folder === "trash") {
 //       whereClause.isTrash = true;
-//     } else if (folder === "sent") {
-//       whereClause.direction = "sent";
 //     }
 
-//     // Additional filters
-//     if (sender) {
-//       whereClause.fromEmail = { contains: sender, mode: "insensitive" };
-//     }
-//     if (recipient) {
-//       whereClause.toEmail = { contains: recipient, mode: "insensitive" };
-//     }
-//     if (subject) {
-//       whereClause.subject = { contains: subject, mode: "insensitive" };
-//     }
-//     if (dateFrom || dateTo) {
-//       whereClause.sentAt = {};
-//       if (dateFrom) whereClause.sentAt.gte = new Date(dateFrom);
-//       if (dateTo) whereClause.sentAt.lte = new Date(dateTo);
-//     }
-//     if (hasAttachment) {
-//       whereClause.attachments = { some: {} };
-//     }
-//     if (isUnread) {
-//       whereClause.isRead = false;
-//       whereClause.direction = "received";
-//     }
-//     if (isStarred) {
-//       whereClause.isStarred = true;
-//     }
+//     // Include other UI filters from query
+//     if (req.query.sender)
+//       whereClause.fromEmail = {
+//         contains: req.query.sender,
+//         mode: "insensitive",
+//       };
+//     if (req.query.subject)
+//       whereClause.subject = {
+//         contains: req.query.subject,
+//         mode: "insensitive",
+//       };
+//     if (req.query.isUnread === "true") whereClause.isRead = false;
 
 //     // ---------------------------
 //     // 2️⃣ FETCH CONVERSATIONS FROM DATABASE
-//     // 🔥 FIX: Query the Conversation table directly
 //     // ---------------------------
 //     const conversations = await prisma.conversation.findMany({
 //       where: {
 //         emailAccountId: accountId,
 //         messages: {
-//           some: whereClause, // Filter by messages matching criteria
+//           some: whereClause, // 🔥 Filters sidebar list to only show threads with matching messages
 //         },
 //       },
 //       include: {
 //         messages: {
-//           where: whereClause,
+//           where: whereClause, // 🔥 Ensures the preview snippet matches the folder (Sent vs Received)
 //           orderBy: { sentAt: "desc" },
-//           take: 1, // Get latest message for preview
+//           take: 1,
 //           include: {
-//             leadDetail: {
-//               include: {
-//                 leadEmailMeta: true,
-//               },
-//             },
+//             leadDetail: { include: { leadEmailMeta: true } },
 //           },
 //         },
 //       },
@@ -426,50 +377,38 @@ router.get("/conversation-detail", async (req, res) => {
 //       .filter((conv) => conv.messages.length > 0)
 //       .map((conv) => {
 //         const latestMsg = conv.messages[0];
-//         const msgCountData = {
-//           where: {
-//             conversationId: conv.id,
-//             ...whereClause,
-//           },
-//         };
 
-//         // Get unread count for this conversation
+//         // Format unread count specifically for received messages
 //         const unreadCount = conv.messages.filter(
 //           (m) => m.direction === "received" && !m.isRead
 //         ).length;
 
-//         // Get country from lead meta
 //         const country =
 //           latestMsg.leadDetail?.leadEmailMeta?.country ||
 //           latestMsg.leadDetail?.country ||
 //           null;
-
-//         // Parse participants for display
 //         const participants = conv.participants
 //           .split(",")
 //           .map((p) => p.trim())
 //           .filter(Boolean);
 
-//         // Filter by country if needed
-//         if (req.query.country && country !== req.query.country) {
-//           return null;
-//         }
-
-//         // Filter by email search if needed
+//         // Optional filtering by country or search email
+//         if (req.query.country && country !== req.query.country) return null;
 //         if (searchEmail) {
-//           const searchLower = searchEmail.toLowerCase();
-//           const matchesSearch =
-//             conv.participants.toLowerCase().includes(searchLower) ||
-//             conv.initiatorEmail.toLowerCase().includes(searchLower);
-//           if (!matchesSearch) return null;
+//           const s = searchEmail.toLowerCase();
+//           if (
+//             !conv.participants.toLowerCase().includes(s) &&
+//             !conv.initiatorEmail.toLowerCase().includes(s)
+//           )
+//             return null;
 //         }
 
 //         return {
-//           conversationId: conv.id, // 🔥 PRIMARY KEY
+//           conversationId: conv.id,
 //           subject: conv.subject || "(No Subject)",
-//           participants, // All TO + CC participants
+//           participants,
 //           toRecipients: conv.toRecipients.split(",").map((p) => p.trim()),
-//           primaryRecipient: conv.toRecipients.split(",")[0]?.trim(), // First TO recipient
+//           primaryRecipient: conv.toRecipients.split(",")[0]?.trim(),
 //           initiatorEmail: conv.initiatorEmail,
 //           lastDate: conv.lastMessageAt,
 //           lastBody: latestMsg.body
@@ -486,13 +425,9 @@ router.get("/conversation-detail", async (req, res) => {
 //           country,
 //         };
 //       })
-//       .filter(Boolean); // Remove nulls
+//       .filter(Boolean);
 
-//     return res.json({
-//       success: true,
-//       total: result.length,
-//       data: result,
-//     });
+//     return res.json({ success: true, total: result.length, data: result });
 //   } catch (err) {
 //     console.error("🔥 ERROR /conversations:", err);
 //     return res.status(500).json({
@@ -502,47 +437,88 @@ router.get("/conversation-detail", async (req, res) => {
 //     });
 //   }
 // });
-/* server/src/routes/inbox.js */
+
+// router.get("/conversations/:accountId/stats", async (req, res) => {
+//   try {
+//     const accountId = Number(req.params.accountId);
+
+//     const total = await prisma.emailMessage.count({
+//       where: { emailAccountId: accountId },
+//     });
+
+//     const unread = await prisma.emailMessage.count({
+//       where: {
+//         emailAccountId: accountId,
+//         isRead: false,
+//         direction: "received",
+//       },
+//     });
+
+//     const withAttachments = await prisma.emailMessage.count({
+//       where: {
+//         emailAccountId: accountId,
+//         attachments: { some: {} },
+//       },
+//     });
+
+//     res.json({
+//       success: true,
+//       data: {
+//         totalMessages: total,
+//         unreadMessages: unread,
+//         messagesWithAttachments: withAttachments,
+//       },
+//     });
+//   } catch (err) {
+//     console.error("🔥 ERROR /inbox/conversations:", err);
+//     res.status(500).json({
+//       error: "Failed to load conversations",
+//       details: err.message,
+//     });
+//   }
+// });
+/* server/routes/inbox.js */
 
 router.get("/conversations/:accountId", async (req, res) => {
   try {
     const accountId = Number(req.params.accountId);
-    const folder = req.query.folder || "inbox";
+    const folder = (req.query.folder || "inbox").toLowerCase();
     const searchEmail = req.query.searchEmail || "";
 
     if (!accountId) {
-      return res.status(400).json({
-        success: false,
-        message: "Missing accountId",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing accountId" });
     }
 
-    // ---------------------------
+    // ------------------------------------------------------------
     // 1️⃣ BUILD STRICT WHERE CLAUSE
-    // ---------------------------
+    // ------------------------------------------------------------
     let whereClause = {
       emailAccountId: accountId,
       conversationId: { not: null },
     };
 
-    // 🔥 APPLY STRICT SEPARATION LOGIC
-    // Filter by 'direction' to ensure Inbox = Received and Sent = Sent
+    // 🔥 FIX: Apply filtering based on the 'folder' column directly
     if (folder === "inbox") {
-      whereClause.direction = "received"; // 🔥 Show ONLY received messages
+      whereClause.folder = "inbox"; // 👈 Check folder name from IMAP sync
+      whereClause.direction = "received"; // Inbox = ONLY received
       whereClause.hideInbox = false;
       whereClause.isTrash = false;
       whereClause.isSpam = false;
     } else if (folder === "sent") {
-      whereClause.direction = "sent"; // 🔥 Show ONLY sent messages
+      whereClause.folder = "sent"; // 👈 Check folder name from IMAP sync
+      whereClause.direction = "sent"; // Sent = ONLY sent
       whereClause.isTrash = false;
       whereClause.isSpam = false;
     } else if (folder === "spam") {
-      whereClause.isSpam = true;
+      whereClause.folder = "spam"; // 👈 Filter by folder name directly
+      // ❌ Do not force direction check for spam to ensure bounce notifications show
     } else if (folder === "trash") {
-      whereClause.isTrash = true;
+      whereClause.folder = "trash"; // 👈 Filter by folder name directly
     }
 
-    // Include other UI filters from query
+    // Include UI filters
     if (req.query.sender)
       whereClause.fromEmail = {
         contains: req.query.sender,
@@ -555,19 +531,19 @@ router.get("/conversations/:accountId", async (req, res) => {
       };
     if (req.query.isUnread === "true") whereClause.isRead = false;
 
-    // ---------------------------
+    // ------------------------------------------------------------
     // 2️⃣ FETCH CONVERSATIONS FROM DATABASE
-    // ---------------------------
+    // ------------------------------------------------------------
     const conversations = await prisma.conversation.findMany({
       where: {
         emailAccountId: accountId,
         messages: {
-          some: whereClause, // 🔥 Filters sidebar list to only show threads with matching messages
+          some: whereClause, // Sidebar only shows threads with folder-matched messages
         },
       },
       include: {
         messages: {
-          where: whereClause, // 🔥 Ensures the preview snippet matches the folder (Sent vs Received)
+          where: whereClause, // Snippets only pull from messages in this folder
           orderBy: { sentAt: "desc" },
           take: 1,
           include: {
@@ -578,15 +554,15 @@ router.get("/conversations/:accountId", async (req, res) => {
       orderBy: { lastMessageAt: "desc" },
     });
 
-    // ---------------------------
+    // ------------------------------------------------------------
     // 3️⃣ FORMAT RESPONSE
-    // ---------------------------
+    // ------------------------------------------------------------
     const result = conversations
       .filter((conv) => conv.messages.length > 0)
       .map((conv) => {
         const latestMsg = conv.messages[0];
 
-        // Format unread count specifically for received messages
+        // Format unread count for received messages in this specific folder
         const unreadCount = conv.messages.filter(
           (m) => m.direction === "received" && !m.isRead
         ).length;
@@ -595,18 +571,17 @@ router.get("/conversations/:accountId", async (req, res) => {
           latestMsg.leadDetail?.leadEmailMeta?.country ||
           latestMsg.leadDetail?.country ||
           null;
-        const participants = conv.participants
+        const participants = (conv.participants || "")
           .split(",")
           .map((p) => p.trim())
           .filter(Boolean);
 
-        // Optional filtering by country or search email
         if (req.query.country && country !== req.query.country) return null;
         if (searchEmail) {
           const s = searchEmail.toLowerCase();
           if (
-            !conv.participants.toLowerCase().includes(s) &&
-            !conv.initiatorEmail.toLowerCase().includes(s)
+            !conv.participants?.toLowerCase().includes(s) &&
+            !conv.initiatorEmail?.toLowerCase().includes(s)
           )
             return null;
         }
@@ -615,8 +590,10 @@ router.get("/conversations/:accountId", async (req, res) => {
           conversationId: conv.id,
           subject: conv.subject || "(No Subject)",
           participants,
-          toRecipients: conv.toRecipients.split(",").map((p) => p.trim()),
-          primaryRecipient: conv.toRecipients.split(",")[0]?.trim(),
+          toRecipients: (conv.toRecipients || "")
+            .split(",")
+            .map((p) => p.trim()),
+          primaryRecipient: (conv.toRecipients || "").split(",")[0]?.trim(),
           initiatorEmail: conv.initiatorEmail,
           lastDate: conv.lastMessageAt,
           lastBody: latestMsg.body
@@ -645,47 +622,43 @@ router.get("/conversations/:accountId", async (req, res) => {
     });
   }
 });
-/* 📊 GET: Conversation Statistics */
+
+/* server/src/routes/inbox.js */
+
 router.get("/conversations/:accountId/stats", async (req, res) => {
   try {
     const accountId = Number(req.params.accountId);
 
-    const total = await prisma.emailMessage.count({
-      where: { emailAccountId: accountId },
-    });
-
-    const unread = await prisma.emailMessage.count({
+    // 🔥 Define the logic for what "Inbox" vs "Sent" means for the counts
+    const inboxUnread = await prisma.emailMessage.count({
       where: {
         emailAccountId: accountId,
+        direction: "received", // Inbox = Received
         isRead: false,
-        direction: "received",
+        isSpam: false,
+        isTrash: false,
       },
     });
 
-    const withAttachments = await prisma.emailMessage.count({
+    const sentTotal = await prisma.emailMessage.count({
       where: {
         emailAccountId: accountId,
-        attachments: { some: {} },
+        direction: "sent", // Sent folder logic
       },
     });
 
     res.json({
       success: true,
       data: {
-        totalMessages: total,
-        unreadMessages: unread,
-        messagesWithAttachments: withAttachments,
+        unreadMessages: inboxUnread,
+        sentMessages: sentTotal,
       },
     });
   } catch (err) {
-    console.error("🔥 ERROR /inbox/conversations:", err);
-    res.status(500).json({
-      error: "Failed to load conversations",
-      details: err.message,
-    });
+    console.error("🔥 Stats Error:", err);
+    res.status(500).json({ success: false });
   }
 });
-
 /* 📧 GET: All Messages in a Conversation Thread */
 router.get("/conversations/:conversationId/messages", async (req, res) => {
   try {
