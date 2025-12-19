@@ -247,10 +247,86 @@ export default function MessageView({
     });
   };
 
+  // const handleReply = (type, message) => {
+  //   if (!message) return;
+
+  //   // 1. Prepare Data for the "Outlook Style" Header
+  //   const originalSender = formatSender(message.fromName, message.fromEmail);
+  //   const sentDate = formatLongDate(message.sentAt);
+  //   const originalTo = message.toEmail;
+  //   const originalCc = message.ccEmail
+  //     ? message.ccEmail.split(",").join("; ")
+  //     : "";
+  //   const originalSubject = message.subject || "(No Subject)";
+
+  //   // 2. Build the Outlook Header Block
+  //   const outlookHeader = `
+  //     <br>
+  //     <hr style="border:none; border-top:1px solid #E1E1E1">
+  //     <div style="font-family: Calibri, sans-serif; font-size: 11pt; color: #000000;">
+  //       <b>From:</b> ${originalSender}<br>
+  //       <b>Sent:</b> ${sentDate}<br>
+  //       <b>To:</b> ${originalTo}<br>
+  //       ${originalCc ? `<b>Cc:</b> ${originalCc}<br>` : ""}
+  //       <b>Subject:</b> ${originalSubject}
+  //     </div>
+  //     <br>
+  //   `;
+
+  //   // 3. Combine Header + Original Body
+  //   const quotedBody = `
+  //     ${outlookHeader}
+  //     <div>
+  //       ${message.bodyHtml || message.body}
+  //     </div>
+  //   `;
+
+  //   // 4. Set Reply Mode & ID
+  //   setReplyingToMessageId(message.id);
+  //   setReplyMode(type);
+
+  //   // 5. Determine New Subject
+  //   const prefix = message.subject?.startsWith("Re:") ? "" : "Re: ";
+  //   const newSubject = `${prefix}${message.subject || "(No Subject)"}`;
+
+  //   // 6. Determine Recipients
+  //   let to = message.fromEmail;
+  //   let cc = "";
+
+  //   if (type === "replyAll") {
+  //     const allRecipients = [
+  //       message.fromEmail,
+  //       ...(message.toEmail ? message.toEmail.split(",") : []),
+  //       ...(message.ccEmail ? message.ccEmail.split(",") : []),
+  //     ]
+  //       .map((e) => e.trim())
+  //       .filter((e) => e !== selectedAccount.email);
+
+  //     to = [...new Set(allRecipients)].join(", ");
+  //   }
+
+  //   // 7. Set Editor State
+  //   setReplyData({
+  //     from: selectedAccount.email,
+  //     to: to,
+  //     cc: cc,
+  //     subject: newSubject,
+  //     body: "",
+  //   });
+
+  //   // 8. Put the Quoted Text in the "Show quoted text" section
+  //   setReplyData((prev) => ({ ...prev, body: quotedBody }));
+  //   setShowQuotedText(true);
+
+  //   // Clear the main typing area
+  //   setTimeout(() => {
+  //     if (editorRef.current) editorRef.current.innerHTML = "";
+  //   }, 0);
+  // };
   const handleReply = (type, message) => {
     if (!message) return;
 
-    // 1. Prepare Data for the "Outlook Style" Header
+    // Prepare Outlook Style Data
     const originalSender = formatSender(message.fromName, message.fromEmail);
     const sentDate = formatLongDate(message.sentAt);
     const originalTo = message.toEmail;
@@ -259,9 +335,8 @@ export default function MessageView({
       : "";
     const originalSubject = message.subject || "(No Subject)";
 
-    // 2. Build the Outlook Header Block
+    // 🔥 UPDATED: Changed font-size from 11pt to 9pt
     const outlookHeader = `
-      <br>
       <hr style="border:none; border-top:1px solid #E1E1E1">
       <div style="font-family: Calibri, sans-serif; font-size: 11pt; color: #000000;">
         <b>From:</b> ${originalSender}<br>
@@ -273,7 +348,6 @@ export default function MessageView({
       <br>
     `;
 
-    // 3. Combine Header + Original Body
     const quotedBody = `
       ${outlookHeader}
       <div>
@@ -281,15 +355,12 @@ export default function MessageView({
       </div>
     `;
 
-    // 4. Set Reply Mode & ID
     setReplyingToMessageId(message.id);
     setReplyMode(type);
 
-    // 5. Determine New Subject
     const prefix = message.subject?.startsWith("Re:") ? "" : "Re: ";
     const newSubject = `${prefix}${message.subject || "(No Subject)"}`;
 
-    // 6. Determine Recipients
     let to = message.fromEmail;
     let cc = "";
 
@@ -305,7 +376,6 @@ export default function MessageView({
       to = [...new Set(allRecipients)].join(", ");
     }
 
-    // 7. Set Editor State
     setReplyData({
       from: selectedAccount.email,
       to: to,
@@ -314,20 +384,87 @@ export default function MessageView({
       body: "",
     });
 
-    // 8. Put the Quoted Text in the "Show quoted text" section
     setReplyData((prev) => ({ ...prev, body: quotedBody }));
     setShowQuotedText(true);
 
-    // Clear the main typing area
     setTimeout(() => {
       if (editorRef.current) editorRef.current.innerHTML = "";
     }, 0);
   };
+  // const handleForward = (type, message) => {
+  //   if (!message) return;
 
+  //   // 1. Prepare Header Data
+  //   const fromHeader = formatHeaderAddress(message.fromName, message.fromEmail);
+  //   const toHeader = message.toEmail;
+
+  //   const ccHeader = message.ccEmail
+  //     ? message.ccEmail
+  //         .split(",")
+  //         .map((e) => e.trim())
+  //         .join("; ")
+  //     : "";
+
+  //   const sentDate = formatLongDate(message.sentAt);
+  //   const subjectHeader = message.subject || "(No Subject)";
+
+  //   // 2. Build the Outlook Forward Header HTML
+  //   const forwardHeader = `
+  //     <br>
+  //     <div style="font-family: Calibri, sans-serif; font-size: 11pt; color: #000000;">
+  //       <hr style="border:none; border-top:1px solid #E1E1E1">
+  //       <b>From:</b> ${fromHeader}<br>
+  //       <b>Sent:</b> ${sentDate}<br>
+  //       <b>To:</b> ${toHeader}<br>
+  //       ${ccHeader ? `<b>Cc:</b> ${ccHeader}<br>` : ""}
+  //       <b>Subject:</b> ${subjectHeader}
+  //     </div>
+  //     <br>
+  //   `;
+
+  //   // 3. Combine with original body
+  //   const forwardedBody = `
+  //     ${forwardHeader}
+  //     <div>
+  //       ${message.bodyHtml || message.body}
+  //     </div>
+  //   `;
+
+  //   // 4. Set State
+  //   setReplyingToMessageId(message.id);
+  //   setReplyMode("forward");
+
+  //   // 🔥 FIX: Ensure we use "Fwd:" not "Re:"
+  //   const prefix = message.subject?.startsWith("Fwd:") ? "" : "Fwd: ";
+
+  //   setReplyData({
+  //     from: selectedAccount.email,
+  //     to: "", // Forward starts with empty To
+  //     cc: "",
+  //     subject: `${prefix}${message.subject || "(No Subject)"}`,
+  //     body: forwardedBody,
+  //   });
+
+  //   // 5. Update Editor DOM immediately
+  //   setTimeout(() => {
+  //     if (editorRef.current) {
+  //       editorRef.current.innerHTML = forwardedBody;
+  //       editorRef.current.focus();
+
+  //       // Place cursor at start
+  //       const range = document.createRange();
+  //       const sel = window.getSelection();
+  //       range.setStart(editorRef.current, 0);
+  //       range.collapse(true);
+  //       sel.removeAllRanges();
+  //       sel.addRange(range);
+  //     }
+  //   }, 0);
+  // };
   const handleForward = (type, message) => {
     if (!message) return;
 
-    // 1. Prepare Header Data
+    // Prepare Header Data
     const fromHeader = formatHeaderAddress(message.fromName, message.fromEmail);
     const toHeader = message.toEmail;
 
@@ -341,7 +478,7 @@ export default function MessageView({
     const sentDate = formatLongDate(message.sentAt);
     const subjectHeader = message.subject || "(No Subject)";
 
-    // 2. Build the Outlook Forward Header HTML
+    // 🔥 UPDATED: Changed font-size from 11pt to 9pt
     const forwardHeader = `
       <br>
       <div style="font-family: Calibri, sans-serif; font-size: 11pt; color: #000000;">
@@ -355,7 +492,7 @@ export default function MessageView({
       <br>
     `;
 
-    // 3. Combine with original body
+    // Combine with original body
     const forwardedBody = `
       ${forwardHeader}
       <div>
@@ -363,22 +500,20 @@ export default function MessageView({
       </div>
     `;
 
-    // 4. Set State
     setReplyingToMessageId(message.id);
     setReplyMode("forward");
 
-    // 🔥 FIX: Ensure we use "Fwd:" not "Re:"
+    // Ensure we use "Fwd:" not "Re:"
     const prefix = message.subject?.startsWith("Fwd:") ? "" : "Fwd: ";
 
     setReplyData({
       from: selectedAccount.email,
-      to: "", // Forward starts with empty To
+      to: "",
       cc: "",
       subject: `${prefix}${message.subject || "(No Subject)"}`,
       body: forwardedBody,
     });
 
-    // 5. Update Editor DOM immediately
     setTimeout(() => {
       if (editorRef.current) {
         editorRef.current.innerHTML = forwardedBody;
@@ -394,7 +529,6 @@ export default function MessageView({
       }
     }, 0);
   };
-
   const handleSendReply = async () => {
     const bodyContent = editorRef.current?.innerHTML || "";
 

@@ -275,166 +275,106 @@ function makeImapProxyUrl(uid, filename, accountId) {
 /* server/src/services/sync/imapSync.js */
 
 // async function saveEmailToDB(prisma, account, parsed, msg, direction, folder) {
-//   // 1. INITIALIZE & DEDUPLICATION
-//   const messageId =
-//     parsed.messageId || msg.envelope?.messageId || `uid-${msg.uid}`;
+//   const messageId = parsed.messageId || msg.envelope?.messageId || `uid-${msg.uid}`;
 
+//   // 1. Check for duplicates
 //   const exists = await prisma.emailMessage.findUnique({
-//     where: {
-//       emailAccountId_messageId: { emailAccountId: account.id, messageId },
-//     },
+//     where: { emailAccountId_messageId: { emailAccountId: account.id, messageId } },
 //   });
 //   if (exists) return;
 
-//   // 2. ROBUST NAME & EMAIL EXTRACTION (The Fix for 'Name' <email>)
+//   // 2. Extract Names AND Emails
 //   const fromObj = parsed.from?.value?.[0];
-//   const fromName = fromObj?.name || null;
+//   const fromName = fromObj?.name || null; // Captured from IMAP
 //   const fromEmail = fromObj?.address || "";
 
-//   // ✅ CRITICAL FIX: Extract recipient names correctly
 //   const toRecipients = parsed.to?.value || [];
-//   const toEmail = toRecipients.map((v) => v.address).join(", ") || "";
-//   // Pull the name of the first recipient so toName is not [null]
-//   const toName = toRecipients[0]?.name || null;
+//   const toEmail = toRecipients.map(v => v.address).join(", ") || "";
+//   const toName = toRecipients[0]?.name || null; // FIX: Now captures recipient name
 
-//   const ccRecipients = parsed.cc?.value || [];
-//   const ccEmail = ccRecipients.map((v) => v.address).join(", ") || null;
-
-//   // Normalize Threading Headers
-//   const inReplyTo = parsed.inReplyTo || null;
-//   let referencesStr = null;
-//   if (Array.isArray(parsed.references)) {
-//     referencesStr = parsed.references.join(" ");
-//   } else if (typeof parsed.references === "string") {
-//     referencesStr = parsed.references;
-//   }
-
-//   // 3. CONVERSATION THREADING
-//   let conversationId = await findConversationId(prisma, parsed);
-
-//   if (!conversationId) {
-//     conversationId = messageId;
-//     try {
-//       await prisma.conversation.upsert({
-//         where: { id: messageId },
-//         update: { lastMessageAt: parsed.date || new Date() },
-//         create: {
-//           id: messageId,
-//           emailAccountId: account.id,
-//           subject: parsed.subject || "(No Subject)",
-//           participants: [fromEmail, toEmail].filter(Boolean).join(","),
-//           toRecipients: toEmail,
-//           lastMessageAt: parsed.date || new Date(),
-//           initiatorEmail: fromEmail,
-//         },
-//       });
-//     } catch (err) {
-//       conversationId = messageId;
-//     }
-//   }
-
-//   // 4. CLOUDFLARE R2 ATTACHMENT PROCESSING
+//   // 3. Cloudflare R2 Upload
 //   let attachmentsMeta = [];
 //   if (parsed.attachments?.length) {
 //     for (const att of parsed.attachments) {
-//       const buffer = att.content;
-//       if (!buffer) continue;
-
-//       const contentHash = generateHash(buffer);
-//       // 🔥 Isolated storage key for Cloudflare R2
+//       if (!att.content) continue;
+//       const contentHash = generateHash(att.content);
 //       const uniqueKey = `${contentHash}-${account.id}-${Date.now()}`;
-
-//       let storageUrl;
 //       try {
-//         // Force upload to Cloudflare R2
-//         storageUrl = await uploadToR2WithHash(
-//           buffer,
-//           att.contentType || "application/octet-stream",
-//           uniqueKey
-//         );
+//         const storageUrl = await uploadToR2WithHash(att.content, att.contentType, uniqueKey);
+//         attachmentsMeta.push({ filename: att.filename, mimeType: att.contentType, size: att.content.length, storageUrl, hash: contentHash });
 //       } catch (e) {
-//         console.warn(`⚠️ R2 failed for ${att.filename}, using proxy fallback`);
-//         storageUrl = makeImapProxyUrl(msg.uid, att.filename, account.id);
+//         console.warn("R2 failed, using proxy");
 //       }
-
-//       attachmentsMeta.push({
-//         filename: att.filename || "file",
-//         mimeType: att.contentType,
-//         size: buffer.length,
-//         storageUrl: storageUrl,
-//         hash: contentHash,
-//       });
 //     }
 //   }
 
-//   // 5. FINAL DATABASE INSERTION
+//   // 4. Save to Database
 //   try {
 //     await prisma.emailMessage.create({
 //       data: {
 //         emailAccountId: account.id,
-//         conversationId,
+//         conversationId: (await findConversationId(prisma, parsed)) || messageId,
 //         messageId,
 //         subject: parsed.subject || "(No Subject)",
-
-//         // ✅ DATA MAPPING: fromName and toName are now both captured
-//         fromEmail,
-//         fromName,
-//         toEmail,
-//         toName,
-
-//         ccEmail,
+//         fromEmail, fromName, toEmail, toName, // 🔥 BOTH Name and Email are now stored
 //         body: parsed.html || parsed.textAsHtml || parsed.text,
-//         direction,
-//         folder,
-//         sentAt: parsed.date || msg.internalDate || new Date(),
-//         inReplyTo,
-//         references: referencesStr,
-//         attachments: attachmentsMeta.length
-//           ? { create: attachmentsMeta }
-//           : undefined,
+//         direction, folder, sentAt: parsed.date || new Date(),
+//         attachments: attachmentsMeta.length ? { create: attachmentsMeta } : undefined,
 //       },
 //     });
-//     console.log(
-//       `✅ [STORED] Msg from: ${fromName || fromEmail} To: ${toName || toEmail}`
-//     );
 //   } catch (err) {
-//     console.error(`❌ [DB ERROR] Failed to save ${messageId}:`, err.message);
+//     console.error(`❌ DB Error: ${err.message}`);
 //   }
 // }
-
-
-/* server/src/services/sync/imapSync.js */
+/* server/services/sync/imapSync.js */
 
 async function saveEmailToDB(prisma, account, parsed, msg, direction, folder) {
-  const messageId = parsed.messageId || msg.envelope?.messageId || `uid-${msg.uid}`;
+  const messageId =
+    parsed.messageId || msg.envelope?.messageId || `uid-${msg.uid}`;
 
   // 1. Check for duplicates
   const exists = await prisma.emailMessage.findUnique({
-    where: { emailAccountId_messageId: { emailAccountId: account.id, messageId } },
+    where: {
+      emailAccountId_messageId: { emailAccountId: account.id, messageId },
+    },
   });
   if (exists) return;
 
   // 2. Extract Names AND Emails
   const fromObj = parsed.from?.value?.[0];
-  const fromName = fromObj?.name || null; // Captured from IMAP
+  const fromName = fromObj?.name || null;
   const fromEmail = fromObj?.address || "";
 
   const toRecipients = parsed.to?.value || [];
-  const toEmail = toRecipients.map(v => v.address).join(", ") || "";
-  const toName = toRecipients[0]?.name || null; // FIX: Now captures recipient name
+  const toEmail = toRecipients.map((v) => v.address).join(", ") || "";
+  const toName = toRecipients[0]?.name || null;
 
-  // 3. Cloudflare R2 Upload
+  // 3. Cloudflare R2 Upload & Attachment Processing
   let attachmentsMeta = [];
   if (parsed.attachments?.length) {
     for (const att of parsed.attachments) {
       if (!att.content) continue;
+
       const contentHash = generateHash(att.content);
       const uniqueKey = `${contentHash}-${account.id}-${Date.now()}`;
+
       try {
-        const storageUrl = await uploadToR2WithHash(att.content, att.contentType, uniqueKey);
-        attachmentsMeta.push({ filename: att.filename, mimeType: att.contentType, size: att.content.length, storageUrl, hash: contentHash });
+        const storageUrl = await uploadToR2WithHash(
+          att.content,
+          att.contentType,
+          uniqueKey
+        );
+
+        // 🔥 FIX: Added fallback '|| "file"' to prevent crash on missing filenames
+        attachmentsMeta.push({
+          filename: att.filename || "file",
+          mimeType: att.contentType || "application/octet-stream",
+          size: att.content.length,
+          storageUrl,
+          hash: contentHash,
+        });
       } catch (e) {
-        console.warn("R2 failed, using proxy");
+        console.warn("R2 failed, using proxy", e.message);
       }
     }
   }
@@ -447,16 +387,24 @@ async function saveEmailToDB(prisma, account, parsed, msg, direction, folder) {
         conversationId: (await findConversationId(prisma, parsed)) || messageId,
         messageId,
         subject: parsed.subject || "(No Subject)",
-        fromEmail, fromName, toEmail, toName, // 🔥 BOTH Name and Email are now stored
+        fromEmail,
+        fromName,
+        toEmail,
+        toName,
         body: parsed.html || parsed.textAsHtml || parsed.text,
-        direction, folder, sentAt: parsed.date || new Date(),
-        attachments: attachmentsMeta.length ? { create: attachmentsMeta } : undefined,
+        direction,
+        folder,
+        sentAt: parsed.date || new Date(),
+        attachments: attachmentsMeta.length
+          ? { create: attachmentsMeta }
+          : undefined,
       },
     });
   } catch (err) {
     console.error(`❌ DB Error: ${err.message}`);
   }
 }
+
 /* ======================================================
    🔄 IMAP SYNC (unchanged)
 ====================================================== */
