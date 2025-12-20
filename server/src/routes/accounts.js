@@ -644,224 +644,107 @@ router.put("/:id", protect, async (req, res) => {
   }
 });
 
-// DELETE EMAIL ACCOUNT (with full cleanup + disable IMAP)
-// router.delete("/:id", protect, async (req, res) => {
-//   try {
-//     const id = Number(req.params.id);
-//     if (!id) return res.status(400).json({ error: "Invalid account id" });
+// server/routes/accounts.js
 
-//     console.log("🟡 Starting delete flow for account:", id);
+// server/routes/accounts.js
 
-//     // Disable IMAP credentials first
-//     await prisma.emailAccount.update({
-//       where: { id },
-//       data: {
-//         imapHost: null,
-//         imapUser: null,
-//         encryptedPass: null,
-//         refreshToken: null,
-//         accessToken: null,
-//         verified: false,
-//       },
-//     });
-
-//     console.log("🟢 IMAP credentials disabled — sync stopped");
-
-//     // Run cleanup
-//     try {
-//       const { cleanupEmailAccount } = await import(
-//         "../services/cleanupAccount.js"
-//       );
-//       await cleanupEmailAccount(id);
-//       console.log("🟢 Cleanup executed for account:", id);
-//     } catch (cleanupErr) {
-//       console.error("❌ Cleanup error:", cleanupErr.message);
-//     }
-
-//     // Delete everything in DB safely
-//     await prisma.$transaction(async (tx) => {
-//       console.log("🟡 Running DB delete transaction...");
-
-//       // Get all message IDs
-//       const messageIds = (
-//         await tx.emailMessage.findMany({
-//           where: { emailAccountId: id },
-//           select: { id: true },
-//         })
-//       ).map((m) => m.id);
-
-//       // Attachments + Message Tags
-//       if (messageIds.length > 0) {
-//         await tx.attachment.deleteMany({
-//           where: { messageId: { in: messageIds } },
-//         });
-//         await tx.messageTag.deleteMany({
-//           where: { messageId: { in: messageIds } },
-//         });
-//       }
-
-//       // Delete messages
-//       await tx.emailMessage.deleteMany({
-//         where: { emailAccountId: id },
-//       });
-
-//       // Get conversation IDs
-//       const conversationIds = (
-//         await tx.conversation.findMany({
-//           where: { accountId: id },
-//           select: { id: true },
-//         })
-//       ).map((c) => c.id);
-
-//       // Delete scheduled messages & tags linked with conversations
-//       if (conversationIds.length > 0) {
-//         await tx.scheduledMessage.deleteMany({
-//           where: { conversationId: { in: conversationIds } },
-//         });
-
-//         await tx.conversationTag.deleteMany({
-//           where: { conversationId: { in: conversationIds } },
-//         });
-//       }
-
-//       // Delete scheduled messages linked directly to account
-//       await tx.scheduledMessage.deleteMany({
-//         where: { accountId: id },
-//       });
-
-//       // Delete conversations
-//       await tx.conversation.deleteMany({
-//         where: { accountId: id },
-//       });
-
-//       // Delete email account
-//       await tx.emailAccount.delete({ where: { id } });
-
-//       console.log("🟢 Transaction successfully completed");
-//     });
-
-//     res.json({
-//       success: true,
-//       message: "Account deleted successfully with full cleanup.",
-//     });
-//   } catch (err) {
-//     console.error("❌ Final delete error:", err);
-//     res.status(500).json({ error: "Failed to delete account" });
-//   }
-// });
-// Replace the outer try/catch body in your current DELETE handler
 router.delete("/:id", protect, async (req, res) => {
   const id = Number(req.params.id);
-  if (!id)
-    return res
-      .status(400)
-      .json({ success: false, error: "Invalid account id" });
+  if (!id) return res.status(400).json({ success: false, error: "Invalid ID" });
 
   console.log(`🟡 Starting delete for account ${id}`);
 
   try {
-    // 1. Disable IMAP/SMTP credentials immediately
+    // 1️⃣ CHECK IF ACCOUNT EXISTS FIRST
+    // If it's already deleted (e.g. by cleanup service), just return success.
+    const existing = await prisma.emailAccount.findUnique({ where: { id } });
+
+    if (!existing) {
+      console.log("⚠️ Account already deleted. Skipping DB delete.");
+      return res.json({
+        success: true,
+        message: "Account was already deleted",
+      });
+    }
+
+    // 2️⃣ Disable Credentials (Safe to run)
     await prisma.emailAccount.updateMany({
       where: { id },
       data: {
         imapHost: null,
         imapUser: null,
         encryptedPass: null,
-        refreshToken: null,
-        accessToken: null,
         verified: false,
       },
     });
 
-    console.log("🟢 Credentials disabled");
-
-    // 2. FULL transaction — correct deletion order
+    // 3️⃣ Run Transaction
     await prisma.$transaction(async (tx) => {
-      console.log("🟡 Running DB delete transaction...");
-
-      // ------------------------------------------
-      // A) DELETE EMAIL MESSAGES & DEPENDENCIES
-      // ------------------------------------------
+      // Fetch messages
       const messages = await tx.emailMessage.findMany({
         where: { emailAccountId: id },
         select: { id: true },
       });
-
       const messageIds = messages.map((m) => m.id);
 
+      // Delete message dependencies
       if (messageIds.length > 0) {
-        // Delete attachments FIRST → fixes your FK error
         await tx.attachment.deleteMany({
           where: { messageId: { in: messageIds } },
         });
-
-        // Delete messageTag relations
         await tx.messageTag.deleteMany({
           where: { messageId: { in: messageIds } },
         });
       }
 
       // Delete messages
-      await tx.emailMessage.deleteMany({
-        where: { emailAccountId: id },
-      });
+      await tx.emailMessage.deleteMany({ where: { emailAccountId: id } });
 
-      // ------------------------------------------
-      // B) DELETE CONVERSATIONS & DEPENDENCIES
-      // ------------------------------------------
+      // Fetch conversations (CORRECTED FIELD: emailAccountId)
       const conversations = await tx.conversation.findMany({
-        where: { accountId: id },
+        where: { emailAccountId: id },
         select: { id: true },
       });
-
       const conversationIds = conversations.map((c) => c.id);
 
+      // Delete conversation dependencies
       if (conversationIds.length > 0) {
-        // Delete scheduled messages linked to conversations
         await tx.scheduledMessage.deleteMany({
           where: { conversationId: { in: conversationIds } },
         });
-
-        // Delete conversation tags
         await tx.conversationTag.deleteMany({
           where: { conversationId: { in: conversationIds } },
         });
       }
 
-      // Delete scheduled messages linked directly to account
-      await tx.scheduledMessage.deleteMany({
-        where: { accountId: id },
-      });
+      // Delete remaining scheduled messages (CORRECTED FIELD: accountId)
+      await tx.scheduledMessage.deleteMany({ where: { accountId: id } });
 
-      // Delete conversations
-      await tx.conversation.deleteMany({
-        where: { accountId: id },
-      });
+      // Delete conversations (CORRECTED FIELD: emailAccountId)
+      await tx.conversation.deleteMany({ where: { emailAccountId: id } });
 
-      // ------------------------------------------
-      // C) FINALLY DELETE EMAIL ACCOUNT
-      // ------------------------------------------
-      await tx.emailAccount.delete({
-        where: { id },
-      });
+      // Delete folders & sync state
+      await tx.emailFolder.deleteMany({ where: { accountId: id } });
+      await tx.syncState.deleteMany({ where: { accountId: id } });
 
-      console.log("🟢 DB transaction complete for account", id);
+      // Final Delete
+      await tx.emailAccount.delete({ where: { id } });
     });
 
-    return res.json({ success: true, message: "Account deleted successfully" });
+    console.log("🟢 Account deleted successfully");
+    res.json({ success: true, message: "Account deleted" });
   } catch (err) {
-    console.error("❌ Delete account error:", err?.message, err?.stack);
+    // If error is "Record to delete does not exist", it means a race condition deleted it.
+    // We can safely ignore it and return success.
+    if (err.code === "P2025") {
+      console.log("⚠️ Race condition: Account deleted during transaction.");
+      return res.json({ success: true, message: "Account deleted" });
+    }
 
-    const isProd = process.env.NODE_ENV === "production";
-
-    return res.status(500).json({
-      success: false,
-      error: "Failed to delete account",
-      details: isProd ? err?.message : err?.stack || err,
-    });
+    console.error("❌ Delete error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
-
 /* ============================================================
    🟢 GET USER ACCOUNTS
    ============================================================ */
