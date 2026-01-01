@@ -978,15 +978,7 @@ export default function FollowUpPlanner() {
                       {selectedLead.subject || "No subject"}
                     </p>
                   </div>
-
-                  <div className="bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-purple-100/50">
-                    <p className="text-xs font-medium text-purple-600 mb-1">
-                     Web
-                    </p>
-                    <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
-                      {selectedLead.body || "No body"}
-                    </p>
-                  </div>
+                  
 
                   <div className="bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-purple-100/50">
                     <p className="text-xs font-medium text-purple-600 mb-1">
