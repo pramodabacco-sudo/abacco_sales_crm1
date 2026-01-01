@@ -979,6 +979,7 @@ export default function FollowUpPlanner() {
                     </p>
                   </div>
                   
+                  
 
                   <div className="bg-white/70 backdrop-blur-sm rounded-lg p-3 border border-purple-100/50">
                     <p className="text-xs font-medium text-purple-600 mb-1">
