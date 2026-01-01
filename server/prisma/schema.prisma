@@ -408,20 +408,23 @@ model Attachment {
 // SALES LEAD
 // ============================================================
 model SalesLead {
-  id              Int      @id @default(autoincrement())
-  client          String
-  email           String?
-  cc              String?
-  empId           String?
-  phone           String?
-  country         String?
-  subject         String?
-  body            String?
-  response        String?
-  leadType        String?
-  Result          String?
-  createdAt       DateTime @default(now())
-  leadStatus      String   @default("New")
+  id Int @id @default(autoincrement())
+
+  client   String
+  email    String?
+  cc       String?
+  empId    String?
+  phone    String?
+  country  String?
+  subject  String?
+  body     String?
+  response String?
+  leadType String?
+  Result   String?
+
+  createdAt  DateTime @default(now())
+  leadStatus String   @default("New")
+
   userId          Int?
   leadDetailsId   Int?
   leadEmailMetaId Int?
@@ -438,33 +441,39 @@ model SalesLead {
 // LEAD DETAILS
 // ============================================================
 model LeadDetails {
-  id              Int       @id @default(autoincrement())
-  date            DateTime?
-  client          String
-  email           String
-  cc              String?
-  empId           String?
-  phone           String?
-  subject         String?
-  body            String?
-  response        String?
-  leadType        String?
-  leadStatus      String?   @default("New")
-  brand           String?
-  country         String?
-  salesperson     String?
-  result          String?
-  companyName     String?
-  meetingNotes    String?
+  id Int @id @default(autoincrement())
+
+  date       DateTime?
+  client     String
+  email      String
+  cc         String?
+  empId      String?
+  phone      String?
+  subject    String?
+  body       String?
+  response   String?
+  leadType   String?
+  leadStatus String?   @default("New")
+
+  brand        String?
+  country      String?
+  salesperson  String?
+  result       String?
+  companyName  String?
+  meetingNotes String?
+
   followUpDate    DateTime?
   day             String?
   followUpHistory Json?
   dealValue       Float?
-  createdAt       DateTime  @default(now())
-  lastUpdated     DateTime  @updatedAt
-  active          Boolean?  @default(true)
-  isFollowedUp    Boolean   @default(false)
-  userId          Int?
+
+  createdAt   DateTime @default(now())
+  lastUpdated DateTime @updatedAt
+
+  active       Boolean? @default(true)
+  isFollowedUp Boolean  @default(false)
+
+  userId Int?
 
   messages      EmailMessage[]
   user          User?          @relation(fields: [userId], references: [id])
