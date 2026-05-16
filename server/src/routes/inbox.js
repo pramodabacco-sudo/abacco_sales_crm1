@@ -50,10 +50,16 @@ function normalizeEmailHtml(html) {
     .replace(/\sclass=["']?Mso[a-zA-Z0-9]+["']?/gi, "");
 
   // 2️⃣ Remove ONLY auto-empty blocks
-  cleaned = cleaned.replace(
-    /<(p|div)[^>]*>(\s|&nbsp;|<br\s*\/?>)*<\/\1>/gi,
-    "",
-  );
+// 2️⃣ Preserve Outlook spacing blocks
+cleaned = cleaned.replace(
+  /<p[^>]*>(\s|&nbsp;|<br\s*\/?>)*<\/p>/gi,
+  '<p style="margin:0 0 12px 0;line-height:1.15;font-size:11pt;font-family:Calibri,Arial,sans-serif;"><br></p>'
+);
+
+cleaned = cleaned.replace(
+  /<div[^>]*>(\s|&nbsp;|<br\s*\/?>)*<\/div>/gi,
+  '<div style="margin:0 0 12px 0;line-height:1.15;"><br></div>'
+);
 
   // 3️⃣ Normalize paragraph styles
   cleaned = cleaned.replace(/<p([^>]*)>/gi, (match, attrs) => {
@@ -62,7 +68,7 @@ function normalizeEmailHtml(html) {
 
     // DEFAULT outlook style
     const defaultStyle =
-      "margin:0 0 12px 0;line-height:1.15;font-size:11pt;";
+      "margin:0 0 12px 0;line-height:1.5;font-size:11pt;";
 
     // If style already exists
     if (styleMatch) {
